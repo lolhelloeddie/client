@@ -1,8 +1,6 @@
 package teams
 
 import (
-	"encoding/json"
-
 	"golang.org/x/net/context"
 
 	"github.com/keybase/client/go/libkb"
@@ -11,7 +9,7 @@ import (
 
 func Get(ctx context.Context, g *libkb.GlobalContext, name string) (*Team, error) {
 	f := newFinder(g)
-	return f.find(ctx, g, name)
+	return f.find(ctx, name)
 }
 
 type finder struct {
@@ -24,13 +22,13 @@ func newFinder(g *libkb.GlobalContext) *finder {
 	}
 }
 
-func (f *finder) find(ctx context.Context, g *libkb.GlobalContext, name string) (*Team, error) {
+func (f *finder) find(ctx context.Context, name string) (*Team, error) {
 	raw, err := f.rawTeam(ctx, name)
 	if err != nil {
 		return nil, err
 	}
 
-	team := NewTeam(g, name)
+	team := NewTeam(f.G(), name)
 	team.Box = raw.Box
 	team.ReaderKeyMasks = raw.ReaderKeyMasks
 
@@ -81,6 +79,7 @@ func (f *finder) chainLinks(ctx context.Context, rawTeam *rawTeam) ([]SCChainLin
 }
 
 func (f *finder) newPlayer(ctx context.Context, links []SCChainLink) (*TeamSigChainPlayer, error) {
+	// TODO get our real eldest seqno.
 	player := NewTeamSigChainPlayer(f.G(), f, NewUserVersion(f.G().Env.GetUsername().String(), 1), false)
 	if err := player.AddChainLinks(ctx, links); err != nil {
 		return nil, err
@@ -94,15 +93,4 @@ func (f *finder) UsernameForUID(ctx context.Context, uid keybase1.UID) (string, 
 		return "", err
 	}
 	return name.String(), nil
-}
-
-type rawTeam struct {
-	Status         libkb.AppStatus
-	Chain          []json.RawMessage
-	Box            TeamBox
-	ReaderKeyMasks []keybase1.ReaderKeyMask `json:"reader_key_masks"`
-}
-
-func (r *rawTeam) GetAppStatus() *libkb.AppStatus {
-	return &r.Status
 }

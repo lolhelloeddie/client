@@ -25,6 +25,15 @@ type Team struct {
 	me *libkb.User
 }
 
+type PerTeamKeySeed [PerUserKeySeedSize]byte
+
+// Serializable struct containing all stored team data.
+type TeamData struct {
+	Chain           keybase1.TeamSigChainState
+	PerTeamKeySeeds []PerTeamKeySeed
+	ReaderKeyMasks  []keybase1.ReaderKeyMask
+}
+
 func NewTeam(g *libkb.GlobalContext, name string) *Team {
 	return &Team{Name: name, Contextified: libkb.NewContextified(g)}
 }
