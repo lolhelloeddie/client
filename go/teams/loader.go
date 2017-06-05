@@ -10,6 +10,7 @@ import (
 	"github.com/keybase/client/go/protocol/keybase1"
 )
 
+// Threadsafe.
 type TeamLoader struct {
 	libkb.Contextified
 	storage *Storage
@@ -86,23 +87,70 @@ func (l *TeamLoader) Load(ctx context.Context, lArg LoadTeamArg) (*keybase1.Team
 	return state, err
 }
 
-func (l *TeamLoader) loadFromServer(ctx context.Context, lArg LoadTeamArg) error {
-	// TODO check load arg for id|name
-
+func (l *TeamLoader) loadFromServerFromScratch(ctx context.Context, lArg LoadTeamArg) (*keybase1.TeamData, error) {
 	sArg := libkb.NewRetryAPIArg("team/get")
 	sArg.NetContext = ctx
 	sArg.SessionType = libkb.APISessionTypeREQUIRED
 	sArg.Args = libkb.HTTPArgs{
 		"name": libkb.S{Val: string(lArg.Name)},
 		"id":   libkb.S{Val: lArg.ID.String()},
-		// TODO used cached last seqno 0
+		// TODO used cached last seqno 0 (in a non from-scratch function)
 		"low": libkb.I{Val: 0},
 	}
 	var rt rawTeam
 	if err := l.G().API.GetDecode(sArg, &rt); err != nil {
+		return nil, err
+	}
+
+	links, err := l.parseChainLinks(ctx, rt)
+	if err != nil {
 		return err
 	}
+
+	player, err := l.newPlayer(ctx, links)
+	if err != nil {
+		return nil, err
+	}
+
+	state, err := player.GetState()
+	if err != nil {
+		return nil, err
+	}
+
+	// TODO (non-critical) validate reader key masks
+
+	rt.Box
+
+	keybase1.TeamData{
+		Chain:           state,
+		PerTeamKeySeeds: TODO,
+		ReaderKeyMasks:  rt.ReaderKeyMasks,
+	}
+
 	return nil
+}
+
+func (l *TeamLoader) parseChainLinks(ctx context.Context, rawTeam *rawTeam) ([]SCChainLink, error) {
+	var links []SCChainLink
+	for _, raw := range rawTeam.Chain {
+		link, err := ParseTeamChainLink(string(raw))
+		if err != nil {
+			return nil, err
+		}
+		links = append(links, link)
+	}
+	return links, nil
+}
+
+func (l *TeamLoader) newPlayer(ctx context.Context, links []SCChainLink) (*TeamSigChainPlayer, error) {
+	// TODO get our real eldest seqno.
+	// TODO determine whether really subteam
+	isSubteam := false
+	player := NewTeamSigChainPlayer(f.G(), f, NewUserVersion(f.G().Env.GetUsername().String(), 1), isSubteam)
+	if err := player.AddChainLinks(ctx, links); err != nil {
+		return nil, err
+	}
+	return player, nil
 }
 
 // Response from server

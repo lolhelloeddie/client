@@ -87,7 +87,7 @@ func NewDiskStorage(g *libkb.GlobalContext) *DiskStorage {
 	}
 	return &DiskStorage{
 		Contextified: libkb.NewContextified(g),
-		encryptedDB:  encrypteddb.New(g, g.LocalDb, qq),
+		encryptedDB:  encrypteddb.New(g, g.LocalDb, keyFn),
 	}
 }
 
@@ -115,7 +115,7 @@ func (s *DiskStorage) Get(ctx context.Context, teamID keybase1.TeamID) (res keyb
 
 	key := s.dbKey(ctx, teamID)
 	var item DiskStorageItem
-	found, err := s.encryptedDB.Get(ctx, key, &item)
+	found, err = s.encryptedDB.Get(ctx, key, &item)
 	if (err != nil) || !found {
 		return res, found, err
 	}
@@ -222,4 +222,4 @@ func (d LameSecretUI) GetPassphrase(pinentry keybase1.GUIEntryArg, terminal *key
 	return keybase1.GetPassphraseRes{}, fmt.Errorf("no secret UI available")
 }
 
-var getLameSecretUI = func() libkb.LameSecretUI { return LameSecretUI{} }
+var getLameSecretUI = func() libkb.SecretUI { return LameSecretUI{} }
