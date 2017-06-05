@@ -46,7 +46,8 @@ func (a *LoadTeamArg) check() error {
 	return nil
 }
 
-func (l *TeamLoader) Load(ctx context.Context, lArg LoadTeamArg) (Something, error) {
+// TODO change this to return a frienldy version of TeamData. Perhaps Team.
+func (l *TeamLoader) Load(ctx context.Context, lArg LoadTeamArg) (*keybase1.TeamData, error) {
 	err := lArg.check()
 	if err != nil {
 		return nil, err
@@ -58,21 +59,31 @@ func (l *TeamLoader) Load(ctx context.Context, lArg LoadTeamArg) (Something, err
 	}
 	var info infoT
 
-	if lArg.ForceReload {
+	if lArg.ForceFullReload {
 		panic("TODO")
 	}
 
-	state := l.storage.Get(lArg)
+	if lArg.ForceSync {
+		panic("TODO")
+	}
+
+	if len(lArg.ID) == 0 {
+		panic("TODO support load by team name")
+	}
+	teamID := lArg.ID
+
+	state := l.storage.Get(ctx, teamID)
 	info.hitCache == (state != nil)
 	if state == nil {
 		panic("TODO")
 	}
 
 	if info.loadedFromServer {
-		l.storage.Put(ctx, qq, qq)
+		panic("TODO store")
+		// l.storage.Put(ctx, qq, qq)
 	}
 
-	return err
+	return state, err
 }
 
 func (l *TeamLoader) loadFromServer(ctx context.Context, lArg LoadTeamArg) error {

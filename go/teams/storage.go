@@ -58,7 +58,7 @@ func (s *Storage) Get(ctx context.Context, teamID keybase1.TeamID) *keybase1.Tea
 	res, found, err := s.disk.Get(ctx, teamID)
 	if found && err == nil {
 		// Disk hit
-		return res
+		return &res
 	}
 
 	return nil
@@ -82,9 +82,12 @@ type DiskStorageItem struct {
 }
 
 func NewDiskStorage(g *libkb.GlobalContext) *DiskStorage {
+	keyFn := func(ctx context.Context) ([32]byte, error) {
+		return getLocalStorageSecretBoxKey(ctx, g)
+	}
 	return &DiskStorage{
 		Contextified: libkb.NewContextified(g),
-		encryptedDB:  encrypteddb.New(g, g.LocalDB, qq),
+		encryptedDB:  encrypteddb.New(g, g.LocalDb, qq),
 	}
 }
 
@@ -191,9 +194,9 @@ func (s *MemoryStorage) Get(ctx context.Context, teamID keybase1.TeamID) *keybas
 // ***
 const localStorageCryptoVersion = 1
 
-func getLocalStorageSecretBoxKey(ctx context.Context, g *libkb.GlobalContext, getSecretUI func() libkb.SecretUI) (fkey [32]byte, err error) {
+func getLocalStorageSecretBoxKey(ctx context.Context, g *libkb.GlobalContext) (fkey [32]byte, err error) {
 	// Get secret device key
-	encKey, err := engine.GetMySecretKey(ctx, g, getSecretUI, libkb.DeviceEncryptionKeyType,
+	encKey, err := engine.GetMySecretKey(ctx, g, getLameSecretUI, libkb.DeviceEncryptionKeyType,
 		"encrypt teams storage")
 	if err != nil {
 		return fkey, err
@@ -212,3 +215,11 @@ func getLocalStorageSecretBoxKey(ctx context.Context, g *libkb.GlobalContext, ge
 	copy(fkey[:], skey[:])
 	return fkey, nil
 }
+
+type LameSecretUI struct{}
+
+func (d LameSecretUI) GetPassphrase(pinentry keybase1.GUIEntryArg, terminal *keybase1.SecretEntryArg) (keybase1.GetPassphraseRes, error) {
+	return keybase1.GetPassphraseRes{}, fmt.Errorf("no secret UI available")
+}
+
+var getLameSecretUI = func() libkb.LameSecretUI { return LameSecretUI{} }
