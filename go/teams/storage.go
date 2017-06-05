@@ -8,12 +8,15 @@ import (
 	lru "github.com/hashicorp/golang-lru"
 	context "golang.org/x/net/context"
 
+	"github.com/keybase/client/go/engine"
 	"github.com/keybase/client/go/libkb"
 	"github.com/keybase/client/go/protocol/keybase1"
 	"github.com/ugorji/go/codec"
 )
 
-// Store TeamSigChainState's on memory and disk. Threadsafe.
+// TODO bust in-memory and disk cache when roles change!
+
+// Store TeamData's on memory and disk. Threadsafe.
 type Storage struct {
 	libkb.Contextified
 	sync.Mutex
@@ -29,11 +32,11 @@ func NewStorage(g *libkb.GlobalContext) *Storage {
 	}
 }
 
-func (s *Storage) Put(ctx context.Context, state TeamSigChainState) {
+func (s *Storage) Put(ctx context.Context, state keybase1.TeamData) {
 	s.Lock()
 	defer s.Unlock()
 
-	s.mem.Put(ctx, state.GetID(), state)
+	s.mem.Put(ctx, state)
 
 	err := s.disk.Put(ctx, state)
 	if err != nil {
@@ -42,7 +45,7 @@ func (s *Storage) Put(ctx context.Context, state TeamSigChainState) {
 }
 
 // Can return nil.
-func (s *Storage) Get(ctx context.Context, teamID keybase1.TeamID) *TeamSigChainState {
+func (s *Storage) Get(ctx context.Context, teamID keybase1.TeamID) *keybase1.TeamData {
 	s.Lock()
 	defer s.Unlock()
 
@@ -63,7 +66,7 @@ func (s *Storage) Get(ctx context.Context, teamID keybase1.TeamID) *TeamSigChain
 
 // --------------------------------------------------
 
-// Store TeamSigChainState's on disk. Threadsafe.
+// Store TeamData's on disk. Threadsafe.
 type DiskStorage struct {
 	libkb.Contextified
 	sync.Mutex
@@ -73,8 +76,8 @@ type DiskStorage struct {
 const DiskStorageVersion = 1
 
 type DiskStorageItem struct {
-	Version int                        `codec:"V"`
-	State   keybase1.TeamSigChainState `codec:"S"`
+	Version int               `codec:"V"`
+	State   keybase1.TeamData `codec:"S"`
 }
 
 func NewDiskStorage(g *libkb.GlobalContext) *DiskStorage {
@@ -83,20 +86,22 @@ func NewDiskStorage(g *libkb.GlobalContext) *DiskStorage {
 	}
 }
 
-func (s *DiskStorage) Put(ctx context.Context, state TeamSigChainState) error {
+func (s *DiskStorage) Put(ctx context.Context, state keybase1.TeamData) error {
 	s.Lock()
 	defer s.Unlock()
 
-	key := s.dbKey(ctx, state.GetID())
+	key := s.dbKey(ctx, state.Chain.Id)
 	item := DiskStorageItem{
 		Version: DiskStorageVersion,
-		State:   state.inner,
+		State:   state,
 	}
 
-	bs, err := s.encode(ctx, item)
+	clearData, err := s.encode(ctx, item)
 	if err != nil {
 		return err
 	}
+
+	// TODO encrypt
 
 	s.G().LocalChatDb.PutRaw(key, bs)
 	if err != nil {
@@ -106,7 +111,7 @@ func (s *DiskStorage) Put(ctx context.Context, state TeamSigChainState) error {
 }
 
 // Res is valid if (found && err == nil)
-func (s *DiskStorage) Get(ctx context.Context, teamID keybase1.TeamID) (res TeamSigChainState, found bool, err error) {
+func (s *DiskStorage) Get(ctx context.Context, teamID keybase1.TeamID) (res keybase1.TeamData, found bool, err error) {
 	s.Lock()
 	defer s.Unlock()
 
@@ -123,9 +128,17 @@ func (s *DiskStorage) Get(ctx context.Context, teamID keybase1.TeamID) (res Team
 	if err != nil {
 		return res, true, err
 	}
-	return TeamSigChainState{
-		inner: item.State,
-	}, true, nil
+
+	// Sanity check
+	// TODO might as well check reader
+	if len(item.State.Chain.Id) == 0 {
+		return res, false, fmt.Errorf("decode from disk had empty team id")
+	}
+	if !item.State.Chain.Id.Eq(teamID) {
+		return res, false, fmt.Errorf("decode from disk had wrong team id %v != %v", item.State.Chain.Id, teamID)
+	}
+
+	return item.State, true, nil
 }
 
 func (s *DiskStorage) dbKey(ctx context.Context, teamID keybase1.TeamID) libkb.DbKey {
@@ -133,7 +146,7 @@ func (s *DiskStorage) dbKey(ctx context.Context, teamID keybase1.TeamID) libkb.D
 		Typ: libkb.DBChatInbox,
 		// TODO make sure subteam don't clobber each other
 		// TODO is this the right thing to key by?
-		Key: fmt.Sprintf("ts:%s", teamID),
+		Key: fmt.Sprintf("tid:%s", teamID),
 	}
 }
 
@@ -176,20 +189,50 @@ func NewMemoryStorage(g *libkb.GlobalContext) *MemoryStorage {
 	}
 }
 
-func (s *MemoryStorage) Put(ctx context.Context, state TeamSigChainState) {
-	s.lru.Add(state.GetID(), state)
+func (s *MemoryStorage) Put(ctx context.Context, state keybase1.TeamData) {
+	s.lru.Add(state.Chain.Id, state)
 }
 
 // Can return nil.
-func (s *MemoryStorage) Get(ctx context.Context, teamID keybase1.TeamID) *TeamSigChainState {
+func (s *MemoryStorage) Get(ctx context.Context, teamID keybase1.TeamID) *keybase1.TeamData {
 	untyped, ok := s.lru.Get(teamID)
 	if !ok {
 		return nil
 	}
-	state, ok := untyped.(TeamSigChainState)
+	state, ok := untyped.(keybase1.TeamData)
 	if !ok {
 		s.G().Log.Warning("Team MemoryStorage got bad type from lru")
 		return nil
 	}
 	return &state
+}
+
+// --------------------------------------------------
+
+// ***
+// If we change this, make sure to update libkb.EncryptionReasonTeamsLocalStorage as well!
+// To avoid using the same derived with two crypto algorithms.
+// ***
+const localStorageCryptoVersion = 1
+
+func getLocalStorageSecretBoxKey(ctx context.Context, g *libkb.GlobalContext, getSecretUI func() libkb.SecretUI) (fkey [32]byte, err error) {
+	// Get secret device key
+	encKey, err := engine.GetMySecretKey(ctx, g, getSecretUI, libkb.DeviceEncryptionKeyType,
+		"encrypt teams storage")
+	if err != nil {
+		return fkey, err
+	}
+	kp, ok := encKey.(libkb.NaclDHKeyPair)
+	if !ok || kp.Private == nil {
+		return fkey, libkb.KeyCannotDecryptError{}
+	}
+
+	// Derive symmetric key from device key
+	skey, err := encKey.SecretSymmetricKey(libkb.EncryptionReasonTeamsLocalStorage)
+	if err != nil {
+		return fkey, err
+	}
+
+	copy(fkey[:], skey[:])
+	return fkey, nil
 }

@@ -25,12 +25,10 @@ type Team struct {
 	me *libkb.User
 }
 
-type PerTeamKeySeed [PerUserKeySeedSize]byte
-
 // Serializable struct containing all stored team data.
 type TeamData struct {
 	Chain           keybase1.TeamSigChainState
-	PerTeamKeySeeds []PerTeamKeySeed
+	PerTeamKeySeeds []keybase1.PerTeamKeySeed
 	ReaderKeyMasks  []keybase1.ReaderKeyMask
 }
 
