@@ -2,6 +2,7 @@ package teams
 
 import (
 	"encoding/json"
+	"fmt"
 
 	"golang.org/x/net/context"
 
@@ -27,12 +28,30 @@ type LoadTeamArg struct {
 	ID   keybase1.TeamID
 	Name TeamName
 
-	ForceReload bool
-	StaleOK     bool // if stale cached versions are OK (for immutable fields)
-	NoNetwork   bool // make no network requests
+	ForceFullReload bool // ignore local data and fetch from the server
+	ForceSync       bool // require a fresh sync with the server
+	StaleOK         bool // if stale cached versions are OK
+	NoNetwork       bool // make no network requests
+}
+
+func (a *LoadTeamArg) check() error {
+	hasID := len(a.ID) > 0
+	hasName := len(a.Name) > 0
+	if hasID && hasName {
+		return fmt.Errorf("team load arg has both ID and Name")
+	}
+	if !hasID && !hasName {
+		return fmt.Errorf("team load arg must have one of ID and Name")
+	}
+	return nil
 }
 
 func (l *TeamLoader) Load(ctx context.Context, lArg LoadTeamArg) (Something, error) {
+	err := lArg.check()
+	if err != nil {
+		return nil, err
+	}
+
 	type infoT struct {
 		hitCache         bool
 		loadedFromServer bool

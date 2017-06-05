@@ -8,10 +8,10 @@ import (
 	lru "github.com/hashicorp/golang-lru"
 	context "golang.org/x/net/context"
 
+	"github.com/keybase/client/go/encrypteddb"
 	"github.com/keybase/client/go/engine"
 	"github.com/keybase/client/go/libkb"
 	"github.com/keybase/client/go/protocol/keybase1"
-	"github.com/ugorji/go/codec"
 )
 
 // TODO bust in-memory and disk cache when roles change!
@@ -40,7 +40,7 @@ func (s *Storage) Put(ctx context.Context, state keybase1.TeamData) {
 
 	err := s.disk.Put(ctx, state)
 	if err != nil {
-		s.G().Log.Warningf("teams.Storage.Put err: %v", err)
+		s.G().Log.CWarningf(ctx, "teams.Storage.Put err: %v", err)
 	}
 }
 
@@ -70,10 +70,11 @@ func (s *Storage) Get(ctx context.Context, teamID keybase1.TeamID) *keybase1.Tea
 type DiskStorage struct {
 	libkb.Contextified
 	sync.Mutex
+	encryptedDB *encrypteddb.EncryptedDB
 }
 
 // Increment to invalidate the disk cache.
-const DiskStorageVersion = 1
+const diskStorageVersion = 1
 
 type DiskStorageItem struct {
 	Version int               `codec:"V"`
@@ -83,6 +84,7 @@ type DiskStorageItem struct {
 func NewDiskStorage(g *libkb.GlobalContext) *DiskStorage {
 	return &DiskStorage{
 		Contextified: libkb.NewContextified(g),
+		encryptedDB:  encrypteddb.New(g, g.LocalDB, qq),
 	}
 }
 
@@ -92,18 +94,11 @@ func (s *DiskStorage) Put(ctx context.Context, state keybase1.TeamData) error {
 
 	key := s.dbKey(ctx, state.Chain.Id)
 	item := DiskStorageItem{
-		Version: DiskStorageVersion,
+		Version: diskStorageVersion,
 		State:   state,
 	}
 
-	clearData, err := s.encode(ctx, item)
-	if err != nil {
-		return err
-	}
-
-	// TODO encrypt
-
-	s.G().LocalChatDb.PutRaw(key, bs)
+	err := s.encryptedDB.Put(ctx, key, item)
 	if err != nil {
 		return err
 	}
@@ -116,17 +111,15 @@ func (s *DiskStorage) Get(ctx context.Context, teamID keybase1.TeamID) (res keyb
 	defer s.Unlock()
 
 	key := s.dbKey(ctx, teamID)
-	bs, found, err := s.G().LocalDb.GetRaw(key)
-	if err != nil {
-		return res, false, err
-	}
-	if !found {
-		return res, false, nil
-	}
 	var item DiskStorageItem
-	err = s.decode(ctx, bs, &item)
-	if err != nil {
-		return res, true, err
+	found, err := s.encryptedDB.Get(ctx, key, &item)
+	if (err != nil) || !found {
+		return res, found, err
+	}
+
+	if item.Version != diskStorageVersion {
+		// Pretend it wasn't found.
+		return res, false, nil
 	}
 
 	// Sanity check
@@ -150,26 +143,9 @@ func (s *DiskStorage) dbKey(ctx context.Context, teamID keybase1.TeamID) libkb.D
 	}
 }
 
-func (s *DiskStorage) encode(ctx context.Context, input interface{}) ([]byte, error) {
-	mh := codec.MsgpackHandle{WriteExt: true}
-	var data []byte
-	enc := codec.NewEncoderBytes(&data, &mh)
-	if err := enc.Encode(input); err != nil {
-		return nil, err
-	}
-	return data, nil
-}
-
-func (s *DiskStorage) decode(ctx context.Context, data []byte, res interface{}) error {
-	mh := codec.MsgpackHandle{WriteExt: true}
-	dec := codec.NewDecoderBytes(data, &mh)
-	err := dec.Decode(res)
-	return err
-}
-
 // --------------------------------------------------
 
-const MEM_CACHE_LRU_SIZE = 50
+const MemCacheLRUSize = 50
 
 // Store some TeamSigChainState's in memory. Threadsafe.
 type MemoryStorage struct {
@@ -178,7 +154,7 @@ type MemoryStorage struct {
 }
 
 func NewMemoryStorage(g *libkb.GlobalContext) *MemoryStorage {
-	nlru, err := lru.New(MEM_CACHE_LRU_SIZE)
+	nlru, err := lru.New(MemCacheLRUSize)
 	if err != nil {
 		// lru.New only panics if size <= 0
 		log.Panicf("Could not create lru cache: %v", err)
