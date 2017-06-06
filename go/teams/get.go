@@ -1,6 +1,8 @@
 package teams
 
 import (
+	"fmt"
+
 	"golang.org/x/net/context"
 
 	"github.com/keybase/client/go/libkb"
@@ -16,6 +18,10 @@ func Get(ctx context.Context, g *libkb.GlobalContext, name string) (*Team, error
 	// g.GetTeamLoader().Load(libkb.LoadTeamArg{
 	// 	Name: name,
 	// })
+
+	if len(name) == 0 {
+		return nil, fmt.Errorf("cannot get empty team name")
+	}
 
 	// TODO very much don't do this. There needs to be one storage so that mutex functions.
 

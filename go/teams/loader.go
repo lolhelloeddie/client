@@ -52,12 +52,15 @@ func (l *TeamLoader) Load(ctx context.Context, lArg libkb.LoadTeamArg) (res *key
 		}
 		teamID = teamName.ToTeamID()
 	}
+	if len(teamID) == 0 {
+		return nil, fmt.Errorf("team loader fault: empty team id")
+	}
 
 	if lArg.ForceFullReload {
 		if lArg.NoNetwork {
 			return nil, fmt.Errorf("cannot force full reload with no-network set")
 		}
-		res, err = l.loadFromServerFromScratch(ctx, lArg)
+		res, err = l.loadFromServerFromScratch(ctx, teamID)
 		if err != nil {
 			return nil, err
 		}
@@ -96,13 +99,13 @@ func (l *TeamLoader) Load(ctx context.Context, lArg libkb.LoadTeamArg) (res *key
 }
 
 // Load a team from the server with no cached data.
-func (l *TeamLoader) loadFromServerFromScratch(ctx context.Context, lArg libkb.LoadTeamArg) (*keybase1.TeamData, error) {
+func (l *TeamLoader) loadFromServerFromScratch(ctx context.Context, teamID keybase1.TeamID) (*keybase1.TeamData, error) {
 	sArg := libkb.NewRetryAPIArg("team/get")
 	sArg.NetContext = ctx
 	sArg.SessionType = libkb.APISessionTypeREQUIRED
 	sArg.Args = libkb.HTTPArgs{
 		// "name": libkb.S{Val: string(lArg.Name)},
-		"id": libkb.S{Val: lArg.ID.String()},
+		"id": libkb.S{Val: teamID.String()},
 		// TODO used cached last seqno 0 (in a non from-scratch function)
 		"low": libkb.I{Val: 0},
 	}
