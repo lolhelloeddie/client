@@ -2,6 +2,7 @@ package teams
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"golang.org/x/net/context"
@@ -27,7 +28,7 @@ type LoadTeamArg struct {
 	// One of these must be specified.
 	// If both are specified ID will be used and Name will be checked.
 	ID   keybase1.TeamID
-	Name TeamName
+	Name string
 
 	ForceFullReload bool // ignore local data and fetch from the server
 	ForceSync       bool // require a fresh sync with the server
@@ -47,9 +48,12 @@ func (a *LoadTeamArg) check() error {
 	return nil
 }
 
-// TODO change this to return a frienldy version of TeamData. Perhaps Team.
-func (l *TeamLoader) Load(ctx context.Context, lArg LoadTeamArg) (*keybase1.TeamData, error) {
-	err := lArg.check()
+// TODO change this to return a friendly version of TeamData. Perhaps Team.
+func (l *TeamLoader) Load(ctx context.Context, lArg LoadTeamArg) (res *keybase1.TeamData, err error) {
+	// GIANT TODO: check for role change
+	// GIANT TODO: load recursively to load subteams
+
+	err = lArg.check()
 	if err != nil {
 		return nil, err
 	}
@@ -59,41 +63,70 @@ func (l *TeamLoader) Load(ctx context.Context, lArg LoadTeamArg) (*keybase1.Team
 		loadedFromServer bool
 	}
 	var info infoT
+	defer l.G().Log.CDebugf(ctx, "TeamLoader#Load info:%+v", info)
+
+	teamID := lArg.ID
+	if len(lArg.ID) == 0 {
+		teamName, err := TeamNameFromString(lArg.Name)
+		if err != nil {
+			return nil, err
+		}
+		if teamName.IsSubTeam() {
+			return nil, fmt.Errorf("TODO: support loading subteams by name")
+		}
+		teamID = teamName.ToTeamID()
+	}
 
 	if lArg.ForceFullReload {
+		if lArg.NoNetwork {
+			return nil, fmt.Errorf("cannot force full reload with no-network set")
+		}
+		res, err = l.loadFromServerFromScratch(ctx, lArg)
+		if err != nil {
+			return nil, err
+		}
+		info.loadedFromServer = true
+	}
+
+	if res == nil {
+		// Load from cache
+		state := l.storage.Get(ctx, teamID)
+		info.hitCache == (state != nil)
+		if state == nil {
+			panic("TODO")
+		}
+	}
+
+	if lArg.ForceSync && !lArg.ForceFullReload {
+		if lArg.NoNetwork {
+			return nil, fmt.Errorf("cannot force sync with no-network set")
+		}
 		panic("TODO")
 	}
 
-	if lArg.ForceSync {
-		panic("TODO")
-	}
-
-	if len(lArg.ID) == 0 {
-		panic("TODO support load by team name")
-	}
-	teamID := lArg.ID
-
-	state := l.storage.Get(ctx, teamID)
-	info.hitCache == (state != nil)
-	if state == nil {
-		panic("TODO")
-	}
+	// TODO check freshness and load increment from server
 
 	if info.loadedFromServer {
-		panic("TODO store")
-		// l.storage.Put(ctx, qq, qq)
+		if res == nil {
+			return nil, fmt.Errorf("team loader fault: loaded from server but no result")
+		}
+		l.storage.Put(ctx, *res)
 	}
 
-	return state, err
+	if res == nil {
+		return nil, fmt.Errorf("team loader fault: no result but no error")
+	}
+	return res, nil
 }
 
+// Load a team from the server with no cached data.
 func (l *TeamLoader) loadFromServerFromScratch(ctx context.Context, lArg LoadTeamArg) (*keybase1.TeamData, error) {
 	sArg := libkb.NewRetryAPIArg("team/get")
 	sArg.NetContext = ctx
 	sArg.SessionType = libkb.APISessionTypeREQUIRED
 	sArg.Args = libkb.HTTPArgs{
-		"name": libkb.S{Val: string(lArg.Name)},
-		"id":   libkb.S{Val: lArg.ID.String()},
+		// "name": libkb.S{Val: string(lArg.Name)},
+		"id": libkb.S{Val: lArg.ID.String()},
 		// TODO used cached last seqno 0 (in a non from-scratch function)
 		"low": libkb.I{Val: 0},
 	}
@@ -102,9 +135,9 @@ func (l *TeamLoader) loadFromServerFromScratch(ctx context.Context, lArg LoadTea
 		return nil, err
 	}
 
-	links, err := l.parseChainLinks(ctx, rt)
+	links, err := l.parseChainLinks(ctx, &rt)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	player, err := l.newPlayer(ctx, links)
@@ -119,15 +152,21 @@ func (l *TeamLoader) loadFromServerFromScratch(ctx context.Context, lArg LoadTea
 
 	// TODO (non-critical) validate reader key masks
 
-	rt.Box
-
-	keybase1.TeamData{
-		Chain:           state,
-		PerTeamKeySeeds: TODO,
+	res := keybase1.TeamData{
+		Chain:           state.inner,
+		PerTeamKeySeeds: nil,
 		ReaderKeyMasks:  rt.ReaderKeyMasks,
 	}
 
-	return nil
+	seed, err := l.openBox(ctx, rt.Box, state)
+	if err != nil {
+		return nil, err
+	}
+	res.PerTeamKeySeeds = append(res.PerTeamKeySeeds, *seed)
+
+	// TODO receive prevs (and sort seeds list)
+
+	return &res, nil
 }
 
 func (l *TeamLoader) parseChainLinks(ctx context.Context, rawTeam *rawTeam) ([]SCChainLink, error) {
@@ -143,14 +182,81 @@ func (l *TeamLoader) parseChainLinks(ctx context.Context, rawTeam *rawTeam) ([]S
 }
 
 func (l *TeamLoader) newPlayer(ctx context.Context, links []SCChainLink) (*TeamSigChainPlayer, error) {
-	// TODO get our real eldest seqno.
-	// TODO determine whether really subteam
+	// TODO determine whether this player is for a subteam
 	isSubteam := false
-	player := NewTeamSigChainPlayer(f.G(), f, NewUserVersion(f.G().Env.GetUsername().String(), 1), isSubteam)
+	// TODO get our real eldest seqno.
+	me := NewUserVersion(l.G().Env.GetUsername().String(), 1)
+
+	f := newFinder(l.G())
+	player := NewTeamSigChainPlayer(l.G(), f, me, isSubteam)
 	if err := player.AddChainLinks(ctx, links); err != nil {
 		return nil, err
 	}
 	return player, nil
+}
+
+func (l *TeamLoader) openBox(ctx context.Context, box TeamBox, chain TeamSigChainState) (*keybase1.PerTeamKeySeedItem, error) {
+	userEncKey, err := l.perUserEncryptionKeyForBox(ctx, box)
+	if err != nil {
+		return nil, err
+	}
+
+	secret, err := box.Open(userEncKey)
+	if err != nil {
+		return nil, err
+	}
+
+	signingKey, encryptionKey, err := generatePerTeamKeysFromSecret(secret)
+	if err != nil {
+		return nil, err
+	}
+
+	teamKey, err := chain.GetPerTeamKeyAtGeneration(box.Generation)
+	if err != nil {
+		return nil, err
+	}
+
+	if !teamKey.SigKID.SecureEqual(signingKey.GetKID()) {
+		return nil, errors.New("derived signing key did not match key in team chain")
+	}
+
+	if !teamKey.EncKID.SecureEqual(encryptionKey.GetKID()) {
+		return nil, errors.New("derived encryption key did not match key in team chain")
+	}
+
+	// TODO: check that t.Box.SenderKID is a known device DH key for the
+	// user that signed the link.
+	// See CORE-5399
+
+	seed, err := libkb.MakeByte32Soft(secret)
+	if err != nil {
+		return nil, fmt.Errorf("invalid seed: %v", err)
+	}
+
+	record := keybase1.PerTeamKeySeedItem{
+		Seed:       seed,
+		Generation: box.Generation,
+		Seqno:      teamKey.Seqno,
+	}
+
+	return &record, nil
+}
+
+func (t *TeamLoader) perUserEncryptionKeyForBox(ctx context.Context, box TeamBox) (*libkb.NaclDHKeyPair, error) {
+	kr, err := t.G().GetPerUserKeyring()
+	if err != nil {
+		return nil, err
+	}
+	// XXX this seems to be necessary:
+	if err := kr.Sync(ctx); err != nil {
+		return nil, err
+	}
+	encKey, err := kr.GetEncryptionKeyBySeqno(ctx, box.PerUserKeySeqno)
+	if err != nil {
+		return nil, err
+	}
+
+	return encKey, nil
 }
 
 // Response from server

@@ -86,6 +86,10 @@ func (n TeamName) ToTeamID() keybase1.TeamID {
 	return res
 }
 
+func (n TeamName) IsSubTeam() bool {
+	return strings.Contains(string(n), ".")
+}
+
 const TeamSigChainPlayerSupportedLinkVersion = 2
 
 // Accessor wrapper for keybase1.TeamSigChainState

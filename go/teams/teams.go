@@ -25,13 +25,6 @@ type Team struct {
 	me *libkb.User
 }
 
-// Serializable struct containing all stored team data.
-type TeamData struct {
-	Chain           keybase1.TeamSigChainState
-	PerTeamKeySeeds []keybase1.PerTeamKeySeed
-	ReaderKeyMasks  []keybase1.ReaderKeyMask
-}
-
 func NewTeam(g *libkb.GlobalContext, name string) *Team {
 	return &Team{Name: name, Contextified: libkb.NewContextified(g)}
 }
