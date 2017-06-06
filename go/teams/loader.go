@@ -24,36 +24,12 @@ func NewTeamLoader(g *libkb.GlobalContext, storage *Storage) *TeamLoader {
 	}
 }
 
-type LoadTeamArg struct {
-	// One of these must be specified.
-	// If both are specified ID will be used and Name will be checked.
-	ID   keybase1.TeamID
-	Name string
-
-	ForceFullReload bool // ignore local data and fetch from the server
-	ForceSync       bool // require a fresh sync with the server
-	StaleOK         bool // if stale cached versions are OK
-	NoNetwork       bool // make no network requests
-}
-
-func (a *LoadTeamArg) check() error {
-	hasID := len(a.ID) > 0
-	hasName := len(a.Name) > 0
-	if hasID && hasName {
-		return fmt.Errorf("team load arg has both ID and Name")
-	}
-	if !hasID && !hasName {
-		return fmt.Errorf("team load arg must have one of ID and Name")
-	}
-	return nil
-}
-
 // TODO change this to return a friendly version of TeamData. Perhaps Team.
-func (l *TeamLoader) Load(ctx context.Context, lArg LoadTeamArg) (res *keybase1.TeamData, err error) {
+func (l *TeamLoader) Load(ctx context.Context, lArg libkb.LoadTeamArg) (res *keybase1.TeamData, err error) {
 	// GIANT TODO: check for role change
 	// GIANT TODO: load recursively to load subteams
 
-	err = lArg.check()
+	err = lArg.Check()
 	if err != nil {
 		return nil, err
 	}
@@ -91,7 +67,7 @@ func (l *TeamLoader) Load(ctx context.Context, lArg LoadTeamArg) (res *keybase1.
 	if res == nil {
 		// Load from cache
 		state := l.storage.Get(ctx, teamID)
-		info.hitCache == (state != nil)
+		info.hitCache = (state != nil)
 		if state == nil {
 			panic("TODO")
 		}
@@ -120,7 +96,7 @@ func (l *TeamLoader) Load(ctx context.Context, lArg LoadTeamArg) (res *keybase1.
 }
 
 // Load a team from the server with no cached data.
-func (l *TeamLoader) loadFromServerFromScratch(ctx context.Context, lArg LoadTeamArg) (*keybase1.TeamData, error) {
+func (l *TeamLoader) loadFromServerFromScratch(ctx context.Context, lArg libkb.LoadTeamArg) (*keybase1.TeamData, error) {
 	sArg := libkb.NewRetryAPIArg("team/get")
 	sArg.NetContext = ctx
 	sArg.SessionType = libkb.APISessionTypeREQUIRED

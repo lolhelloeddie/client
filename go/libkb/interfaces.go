@@ -13,6 +13,7 @@ package libkb
  */
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"time"
@@ -577,4 +578,32 @@ const (
 
 type ConnectivityMonitor interface {
 	IsConnected(ctx context.Context) ConnectivityMonitorResult
+}
+
+type LoadTeamArg struct {
+	// One of these must be specified.
+	// If both are specified ID will be used and Name will be checked.
+	ID   keybase1.TeamID
+	Name string
+
+	ForceFullReload bool // ignore local data and fetch from the server
+	ForceSync       bool // require a fresh sync with the server
+	StaleOK         bool // if stale cached versions are OK
+	NoNetwork       bool // make no network requests
+}
+
+func (a *LoadTeamArg) Check() error {
+	hasID := len(a.ID) > 0
+	hasName := len(a.Name) > 0
+	if hasID && hasName {
+		return fmt.Errorf("team load arg has both ID and Name")
+	}
+	if !hasID && !hasName {
+		return fmt.Errorf("team load arg must have one of ID and Name")
+	}
+	return nil
+}
+
+type TeamLoader interface {
+	Load(context.Context, LoadTeamArg) (*keybase1.TeamData, error)
 }

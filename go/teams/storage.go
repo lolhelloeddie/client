@@ -148,6 +148,8 @@ func (s *DiskStorage) dbKey(ctx context.Context, teamID keybase1.TeamID) libkb.D
 
 // --------------------------------------------------
 
+// TODO bust the mem storage on logout
+
 const MemCacheLRUSize = 50
 
 // Store some TeamSigChainState's in memory. Threadsafe.
