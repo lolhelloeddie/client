@@ -22,12 +22,15 @@ func Get(ctx context.Context, g *libkb.GlobalContext, name string) (*Team, error
 	st := NewStorage(g)
 	loader := NewTeamLoader(g, st)
 	td, err := loader.Load(ctx, libkb.LoadTeamArg{
-		Name: name,
+		Name:            name,
+		ForceFullReload: true,
 	})
 	if err != nil {
 		return nil, err
 	}
-	panic("TODO")
+	return &Team{
+		TeamData: td,
+	}, nil
 }
 
 type finder struct {

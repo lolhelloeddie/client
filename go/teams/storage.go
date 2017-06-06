@@ -16,6 +16,8 @@ import (
 
 // TODO bust in-memory and disk cache when roles change!
 
+// TODO ask caches to reload after a successful post. probably do this by having modifiers call force load on loader.
+
 // Store TeamData's on memory and disk. Threadsafe.
 type Storage struct {
 	libkb.Contextified

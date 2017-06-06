@@ -182,12 +182,21 @@ func (l *TeamLoader) openBox(ctx context.Context, box TeamBox, chain TeamSigChai
 		return nil, err
 	}
 
-	signingKey, encryptionKey, err := generatePerTeamKeysFromSecret(secret)
+	keyManager, err := NewTeamKeyManagerWithSecret(l.G(), secret, box.Generation)
 	if err != nil {
 		return nil, err
 	}
 
-	teamKey, err := chain.GetPerTeamKeyAtGeneration(box.Generation)
+	signingKey, err := keyManager.SigningKey()
+	if err != nil {
+		return nil, err
+	}
+	encryptionKey, err := keyManager.EncryptionKey()
+	if err != nil {
+		return nil, err
+	}
+
+	teamKey, err := chain.GetPerTeamKeyAtGeneration(int(box.Generation))
 	if err != nil {
 		return nil, err
 	}
@@ -211,7 +220,7 @@ func (l *TeamLoader) openBox(ctx context.Context, box TeamBox, chain TeamSigChai
 
 	record := keybase1.PerTeamKeySeedItem{
 		Seed:       seed,
-		Generation: box.Generation,
+		Generation: int(box.Generation),
 		Seqno:      teamKey.Seqno,
 	}
 
