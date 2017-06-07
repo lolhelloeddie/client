@@ -292,11 +292,6 @@ func (t *Team) applicationKeyForMask(mask keybase1.ReaderKeyMask, secret []byte)
 }
 
 func (t *Team) ChangeMembership(ctx context.Context, req keybase1.TeamChangeReq) error {
-	// make keys for the team
-	if _, err := t.SharedSecret(ctx); err != nil {
-		return err
-	}
-
 	// load the member set specified in req
 	memSet, err := newMemberSet(ctx, t.G(), req)
 	if err != nil {
@@ -309,15 +304,20 @@ func (t *Team) ChangeMembership(ctx context.Context, req keybase1.TeamChangeReq)
 		return err
 	}
 
+	keyManager, err := t.getKeyManager()
+	if err != nil {
+		return err
+	}
+
 	// create secret boxes for recipients, possibly rotating the key
-	secretBoxes, perTeamKeySection, err := t.recipientBoxes(ctx, memSet)
+	secretBoxes, perTeamKeySection, err := t.recipientBoxes(ctx, keyManager, memSet)
 	if err != nil {
 		return err
 	}
 	section.PerTeamKey = perTeamKeySection
 
 	// create the change item
-	sigMultiItem, err := t.sigChangeItem(ctx, section)
+	sigMultiItem, err := t.sigChangeItem(ctx, keyManager, section)
 	if err != nil {
 		return err
 	}
@@ -349,7 +349,7 @@ func (t *Team) getKeyManager() (*TeamKeyManager, error) {
 	return NewTeamKeyManagerWithSecret(t.G(), item.Seed[:], PerTeamSecretGeneration(item.Generation))
 }
 
-func (t *Team) sigChangeItem(ctx context.Context, section SCTeamSection) (libkb.SigMultiItem, error) {
+func (t *Team) sigChangeItem(ctx context.Context, keyManager *TeamKeyManager, section SCTeamSection) (libkb.SigMultiItem, error) {
 	me, err := t.loadMe()
 	if err != nil {
 		return libkb.SigMultiItem{}, err
@@ -365,11 +365,6 @@ func (t *Team) sigChangeItem(ctx context.Context, section SCTeamSection) (libkb.
 	sig, err := ChangeMembershipSig(me, latestLinkID1, t.NextSeqno(), deviceSigningKey, section)
 	if err != nil {
 		return libkb.SigMultiItem{}, err
-	}
-
-	keyManager, err := t.getKeyManager()
-	if err != nil {
-
 	}
 
 	signingKey, err := keyManager.SigningKey()
@@ -428,13 +423,9 @@ func (t *Team) sigChangeItem(ctx context.Context, section SCTeamSection) (libkb.
 	return sigMultiItem, nil
 }
 
-func (t *Team) recipientBoxes(ctx context.Context, memSet *memberSet) (*PerTeamSharedSecretBoxes, *SCPerTeamKey, error) {
+// modifies keyManager
+func (t *Team) recipientBoxes(ctx context.Context, keyManager *TeamKeyManager, memSet *memberSet) (*PerTeamSharedSecretBoxes, *SCPerTeamKey, error) {
 	deviceEncryptionKey, err := t.G().ActiveDevice.EncryptionKey()
-	if err != nil {
-		return nil, nil, err
-	}
-
-	keyManager, err := t.getKeyManager()
 	if err != nil {
 		return nil, nil, err
 	}
