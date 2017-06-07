@@ -99,6 +99,14 @@ func (t *Team) SharedSecret(ctx context.Context) ([]byte, error) {
 	return t.TeamData.PerTeamKeySeeds[len(t.TeamData.PerTeamKeySeeds)-1].Seed[:], nil
 }
 
+func (t *Team) GetPerTeamKeyGeneration() int {
+	if len(t.TeamData.PerTeamKeySeeds) == 0 {
+		// should never happen
+		return 0
+	}
+	return t.TeamData.PerTeamKeySeeds[len(t.TeamData.PerTeamKeySeeds)-1].Generation
+}
+
 func (t *Team) KBFSKey(ctx context.Context) (keybase1.TeamApplicationKey, error) {
 	return t.ApplicationKey(ctx, keybase1.TeamApplication_KBFS)
 }
