@@ -111,6 +111,7 @@ func (l *TeamLoader) loadFromServerFromScratch(ctx context.Context, teamID keyba
 	}
 	var rt rawTeam
 	if err := l.G().API.GetDecode(sArg, &rt); err != nil {
+		l.G().Log.CDebugf(ctx, "TeamLoader fetch error: %v", err)
 		return nil, err
 	}
 
@@ -230,8 +231,8 @@ func (l *TeamLoader) openBox(ctx context.Context, box TeamBox, chain TeamSigChai
 	return &record, nil
 }
 
-func (t *TeamLoader) perUserEncryptionKeyForBox(ctx context.Context, box TeamBox) (*libkb.NaclDHKeyPair, error) {
-	kr, err := t.G().GetPerUserKeyring()
+func (l *TeamLoader) perUserEncryptionKeyForBox(ctx context.Context, box TeamBox) (*libkb.NaclDHKeyPair, error) {
+	kr, err := l.G().GetPerUserKeyring()
 	if err != nil {
 		return nil, err
 	}
